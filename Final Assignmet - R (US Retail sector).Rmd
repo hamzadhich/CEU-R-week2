@@ -1,0 +1,319 @@
+---
+title: "US Retail Sales Analysis"
+author: "Hamza Dhich"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+---
+# Introduction
+
+Retail sales are a key indicator of economic performance. This report analyzes **year-over-year (YoY) changes in retail sales across different U.S. states and retail subsectors**. We aim to answer the following questions:
+
+1. **Which states experienced the highest and lowest YoY retail sales growth in 2020?**
+2. **How does population size impact retail sales growth?**
+3. **Which retail subsectors performed the best and worst in 2022?**
+4. **How have the top five states by population performed over the years?**
+5. **What was the top retail subsector of each state in 2022 when seen on the map?
+
+This analysis uses data from [TidyTuesday](https://github.com/rfordatascience/tidytuesday) that has retail subsectors sales YoY change as per State from 2019 to 2022 and the **U.S. Census API** that has the population of each state as per census held in 2020.
+---
+
+
+## Install and Load Necessary Packages
+
+```{r}
+install.packages(c("data.table", "ggplot2", "colorblindr", "RColorBrewer", "readr", "tidycensus", "dplyr"))
+
+library(data.table)
+library(ggplot2)
+library(RColorBrewer)
+library(colorblindr)
+library(readr)
+library(tidycensus)
+library(dplyr)
+```
+
+## Load Datasets
+
+```{r}
+state_retail <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2022/2022-12-13/state_retail.csv', col_types = "cciciiccc")
+head(state_retail)
+```
+
+## Load US Census Data
+
+```{r}
+census_api_key("your_api_key", install = TRUE, overwrite = TRUE)
+readRenviron("~/.Renviron")
+
+population_data <- get_decennial(
+  geography = "state",
+  variables = "P1_001N",
+  year = 2020
+)
+
+head(population_data)
+```
+
+## Merge Datasets
+
+```{r}
+state_retail_final <- left_join(
+  state_retail, 
+  population_data %>%
+    select(GEOID, NAME, value),
+  by = c("fips" = "GEOID")
+)
+
+head(state_retail_final)
+```
+
+## Data Aggregation
+
+```{r}
+state_retail_dt <- as.data.table(state_retail_final)
+
+sales_summary_by_state <- state_retail_dt[, .(
+  avg_yoy_change = mean(as.numeric(change_yoy), na.rm = TRUE),
+  population = mean(as.numeric(value), na.rm = TRUE)
+), by = .(state_abbr, NAME, year)]
+
+head(sales_summary_by_state)
+```
+
+## Visualization: Average YoY Change in Total Retail Sales by State (2020)
+
+```{r}
+state_retail_2020 <- sales_summary_by_state[year == 2020]
+
+ggplot(state_retail_2020, aes(x = reorder(state_abbr, avg_yoy_change), y = avg_yoy_change)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Average YoY Change % in Retail Sales by U.S. State (2020)",
+       x = "State", y = "Average YoY Change %") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "beige")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+# The above graph shows that 17 out of 50 US states had positive change in the their total retail sales in 2020 compared to 2019, with RI (Rhode Island) having the highest 5% YoY Chagne and CA (California) most negative i.e. -6%
+
+## Population vs YoY Change in Retail Sales
+
+```{r}
+ggplot(state_retail_2020, aes(x = population, y = avg_yoy_change)) +
+  geom_point(color = "blue") +
+  geom_label(aes(label = state_abbr), size = 3, fill = "white", color = "black") +
+  labs(title = "YoY Change in Retail Sales vs Population (2020)",
+       x = "Population of the State",
+       y = "Average YoY Change %") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "beige"))
+```
+# The above graph shows that US states with greater population (more than 10M) had a negative growth in retail sales, which shows thats that in absolute terms, there was a decline retail sales. This decline could be attributed to COVID-19.
+
+## Top 5 States Based on Average Population
+
+```{r}
+top_states <- sales_summary_by_state[, .(avg_population = mean(population, na.rm = TRUE)), by = state_abbr][order(-avg_population)][1:5, state_abbr]
+
+top_states_data <- sales_summary_by_state[state_abbr %in% top_states]
+
+ggplot(top_states_data, aes(x = year, y = avg_yoy_change, color = state_abbr)) +
+  geom_line() +
+  scale_color_manual(values = brewer.pal(5, "Dark2")) +
+  labs(title = "YoY Change in Retail Sales by Year for Top 5 States",
+       x = "Year", y = "YoY Change %", color = "State") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "beige"))
+```
+#The Line chart above shows that in top 5 states of US (population wise) the retail sales declined from 2019 to 2020, and it greatly increased in 2021 in terms of %, primarily due to retail sales taking a major hit in 2020 due to COVID-19.
+
+
+## Retail Sales Trends by Subsector
+
+```{r}
+sales_summary_by_subsector <- state_retail_dt[, .(
+  avg_yoy_change = mean(as.numeric(change_yoy), na.rm = TRUE)
+), by = .(subsector, year)]
+
+top_subsectors <- sales_summary_by_subsector[, .(
+  overall_avg_yoy = mean(avg_yoy_change, na.rm = TRUE)
+), by = subsector][order(-overall_avg_yoy)][1:5, subsector]
+
+top_subsectors_data <- sales_summary_by_subsector[subsector %in% top_subsectors]
+
+ggplot(top_subsectors_data, aes(x = year, y = avg_yoy_change, color = subsector)) +
+  geom_line() +
+  scale_color_manual(values = brewer.pal(5, "Dark2")) +
+  labs(title = "YoY Change in Retail Sales for Top 5 Subsectors",
+       x = "Year", y = "YoY Change %", color = "Subsector") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "beige"))
+```
+# When analyzing the trends of top subsectors, it can be seen that building materials and supplies and gasoline stations had the highest increase and decrease in terms of %. This shows that the top sectors that took the most hit due to COVID-19.
+
+## Top 10 Retail Subsectors in 2022
+
+```{r}
+top_2022 <- sales_summary_by_subsector[
+  year == 2022 & subsector != "total",
+  .(subsector, avg_yoy_change)
+][order(-avg_yoy_change)][1:10]
+
+top_2022[, subsector := factor(subsector, levels = subsector[order(avg_yoy_change)])]
+
+ggplot(top_2022, aes(x = avg_yoy_change, y = subsector, fill = avg_yoy_change)) +
+  geom_col() +
+  geom_text(aes(label = paste0(round(avg_yoy_change, 1), "%")),
+            hjust = -0.1, size = 3.5, color = "black") +
+  scale_fill_gradient(low = "#104E8B", high = "#63B8FF") +
+  labs(title = "Top 10 Retail Subsectors in US by YoY Change (2022)",
+       x = "Year-over-Year Change (%)", y = NULL) +
+  theme_minimal() +
+  theme(legend.position = "none", panel.grid = element_blank()) +
+  coord_cartesian(xlim = c(0, max(top_2022$avg_yoy_change) * 1.1))
+```
+# As per the latest data we have i.e. of 2022, the bar chart above shows the subsectors of US that had the highest YoY change in sales.
+
+##Bottom 10 Retail subsectors in 2022
+
+```{r}
+bottom_2022 <- sales_summary_by_subsector[
+  year == 2022 & & statesubsector != "total",
+  .(subsector, avg_yoy_change)
+][
+  order(avg_yoy_change)  # Sort ascending (worst performers first)
+][1:10]
+
+# Order subsectors by performance (reverse for proper bar sorting)
+bottom_2022[, subsector := factor(subsector, levels = subsector[order(-avg_yoy_change)])]
+
+# Create horizontal bar chart (with blue gradient for contrast)
+ggplot(bottom_2022, aes(x = avg_yoy_change, y = subsector, fill = avg_yoy_change)) +
+  geom_col() +
+  geom_text(
+    aes(label = paste0(round(avg_yoy_change, 1), "%")),
+    hjust = -0.1,  # Place labels INSIDE bars for negative values
+    size = 3.5,
+    color = "black"
+  ) +
+  scale_fill_gradient(low = "#ff0000", high =  "#ffcccc") +  # red gradient
+  labs(
+    title = "Bottom 10 Retail Subsectors by YoY Change (2022)",
+    x = "Year-over-Year Change (%)",
+    y = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid = element_blank(),
+    panel.background = element_rect(fill = "beige")
+  ) 
+```
+# As per the latest data we have i.e. of 2022, the bar chart above shows the subsectors of US that had the lowest YoY change in sales. Apart from Electronics and Appliances, all subsectors had a postive growth
+
+## Top Retail subsector per U.S. state in US Map (by % YOY Change in 2022)
+```{r}
+sales_summary <- state_retail_dt[, .(
+  avg_yoy_change = mean(as.numeric(change_yoy), na.rm = TRUE)
+), by = .(subsector, state_abbr, NAME, year)]  # Key: added subsector to grouping
+
+# Filter for 2022 and find the top subsector per state
+top_subsectors_per_state <- sales_summary[
+  year == 2022,
+  .SD[which.max(avg_yoy_change)],  # Subset row with highest YoY for each state
+  by = state_abbr
+][, .(
+  state_abbr, 
+  NAME, 
+  subsector, 
+  avg_yoy_change
+)]
+
+
+library(ggplot2)
+library(maps)
+library(ggrepel)  # For avoiding overlapping labels
+
+# Get US state map data
+us_states <- map_data("state")
+
+# Get state centroids (for label placement)
+centroids <- data.frame(
+  region = tolower(state.name),
+  state_abbr = state.abb,
+  long = state.center$x,
+  lat = state.center$y
+)
+
+# Merge centroids with your top subsectors
+map_label_data <- merge(centroids, top_subsectors_per_state, by = "state_abbr", all.x = TRUE)
+
+ggplot() +
+  # Draw state outlines
+  geom_polygon(
+    data = us_states,
+    aes(x = long, y = lat, group = group),
+    fill = "lightgray", color = "white"
+  ) +
+  # Add labels for top subsectors
+  geom_label_repel(
+    data = map_label_data,
+    aes(x = long, y = lat, label = paste0(subsector, "\n", round(avg_yoy_change, 1), "%")),
+    size = 2.5,
+    box.padding = 0.2,
+    segment.color = "transparent",
+    fill = alpha("white", 0.7)
+  ) +
+  # Style the plot
+  theme_void() +
+  labs(
+    title = "Top Retail Subsector by YoY Change (2022)",
+    subtitle = "Labels show subsector and YoY percentage"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+
+# Use state abbreviations and smaller font
+ggplot() +
+  geom_polygon(
+    data = us_states,
+    aes(x = long, y = lat, group = group),
+    fill = "lightgray", color = "white"
+  ) +
+  geom_label_repel(
+    data = map_label_data,
+    aes(
+      x = long, 
+      y = lat,
+      label = paste0(
+        state_abbr, ": ",  # State abbreviation (e.g., "CA")
+        subsector, "\n", 
+        round(avg_yoy_change, 1), "%"
+      )
+    ),
+    size = 2.2,  # Smaller font
+    box.padding = 0.3,
+    segment.color = "transparent",
+    fill = alpha("white", 0.7)
+  ) +
+  theme_void() +
+  labs(title = "Top Retail Subsector by YoY Change (2022)")
+
+```
+#The graph/map above shows that in almost all states apart from Arizona (AZ) Gasoline Stations had the highest YoY increase in sales in 2022
+---
+##Conclusion & Findings:
+This report analyzes U.S. retail sales trends, focusing on state-wise and subsector-wise changes. Using data from the U.S. Census and state retail datasets, we visualize key insights with ggplot2. The findings reveal a sharp decline in retail sales from 2019 to 2020, primarily due to the impact of COVID-19, followed by a strong recovery from 2021 onward. Among retail subsectors, gasoline stations experienced the highest percentage growth in 2022. Additionally, our analysis suggests a negative correlation between a state's population and its year-over-year (YoY) retail sales change, with California—the most populous state—recording the steepest decline in 2020.
+
+
